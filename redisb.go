@@ -113,6 +113,6 @@ func encode(i interface{}) string {
 	case string:
 		return "$" + strconv.Itoa(len(i.(string))) + "\r\n" + i.(string) + "\r\n"
 	default:
-		panic(fmt.Sprintf("Unable to encode type: %q", string(t)))
+		panic(fmt.Sprintf("Unable to encode type: %#v", t))
 	}
 }
