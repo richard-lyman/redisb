@@ -1,5 +1,5 @@
 /*
-Redisb implements a simple Redis Client - a 'Redis base' or redisb.
+Package redisb implements a simple Redis Client - a 'Redis base' or redisb.
 
 For any Redis command one option is to use Do to send the request and process the response as follows:
 
@@ -80,7 +80,7 @@ type RedisError struct {
 	// Holds the prefix key provided by Redis to indicate what class of errors the Suffix describes
 	Prefix string
 	// Holds the suffix description provided by Redis to describe this specific instance of the class of error indicated by the Prefix
-        Suffix string
+	Suffix string
 }
 
 func (e RedisError) Error() string {
@@ -140,12 +140,11 @@ For handling errors, you might use a type switch as follows:
         }
 */
 func Do(c net.Conn, args ...string) (interface{}, error) {
-        tmp, err := DoN(c, args...)
-        if _, isRedisNil := tmp.(RedisNil); isRedisNil {
-                return nil, err
-        } else {
-                return tmp, err
-        }
+	tmp, err := DoN(c, args...)
+	if _, isRedisNil := tmp.(RedisNil); isRedisNil {
+		return nil, err
+	}
+	return tmp, err
 }
 
 /*
