@@ -107,6 +107,11 @@ Outside of the normal responses, there is one other unique response that can be 
 Redis can reply with a value that holds an error message.
 That error message is encoded in the error return value as a redisb.RedisError.
 
+Do can be used as a Send/Receive or as just a Receive.
+When len(args) > 0, they are written to the net.Conn and then the response is received.
+When len(args) == 0, then nothing is written to the net.Conn and the response is received.
+This allows Do to work for notifications.
+
 For any Redis command one option to process a Do response is as follows:
 
         c. err := net.Dial("tcp", "localhost:6379")
@@ -156,6 +161,11 @@ Outside of the normal responses, there are two other unique values that can be r
 Redis can reply with a value that holds an error message.
 That error message is encoded in the error return value as a redisb.RedisError.
 The other unique response value is not returned in the error, and has the redisb.RedisNil type.
+
+DoN can be used as a Send/Receive or as just a Receive.
+When len(args) > 0, they are written to the net.Conn and then the response is received.
+When len(args) == 0, then nothing is written to the net.Conn and the response is received.
+This allows DoN to work for notifications.
 
 For any Redis command one option to process the response is as follows:
 
@@ -224,7 +234,9 @@ For any Redis command another option to process the response is as follows:
         }
 */
 func DoN(c net.Conn, args ...string) (interface{}, error) {
-	fmt.Fprintf(c, encode(args))
+	if len(args) > 0 {
+		fmt.Fprintf(c, encode(args))
+	}
 	return decode(bufio.NewReader(c))
 }
 
