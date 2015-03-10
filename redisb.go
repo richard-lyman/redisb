@@ -240,6 +240,11 @@ func DoN(c net.Conn, args ...string) (interface{}, error) {
 	return decode(bufio.NewReader(c))
 }
 
+// Out sends the arguments and does not read any of the response(s) back in
+func Out(c net.Conn, args ...string) {
+        fmt.Fprintf(c, encode(args))
+}
+
 func encode(i interface{}) string {
 	switch t := i.(type) {
 	case []string:
