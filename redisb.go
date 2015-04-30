@@ -3,7 +3,7 @@ Package redisb implements a simple Redis Client - a 'Redis base' or redisb.
 
 For any Redis command one option is to use Do to send the request and process the response as follows:
 
-        c. err := net.Dial("tcp", "localhost:6379")
+        c, err := net.Dial("tcp", "localhost:6379")
         if err != nil {
                 panic(err.Error())
         }
@@ -90,7 +90,7 @@ func (e RedisError) Error() string {
 func parseError(s string) RedisError {
 	p := strings.SplitN(s, " ", 2)
 	if len(p) < 2 {
-		p[1] = "N/A"
+		p = append(p, "N/A")
 	}
 	return RedisError{p[0], p[1]}
 }
@@ -114,7 +114,7 @@ This allows Do to work for notifications.
 
 For any Redis command one option to process a Do response is as follows:
 
-        c. err := net.Dial("tcp", "localhost:6379")
+        c, err := net.Dial("tcp", "localhost:6379")
         if err != nil {
                 panic(err.Error())
         }
@@ -169,7 +169,7 @@ This allows DoN to work for notifications.
 
 For any Redis command one option to process the response is as follows:
 
-        c. err := net.Dial("tcp", "localhost:6379")
+        c, err := net.Dial("tcp", "localhost:6379")
         if err != nil {
                 panic(err.Error())
         }
@@ -183,7 +183,7 @@ For any Redis command one option to process the response is as follows:
 
 For any Redis command another option to process the response is as follows:
 
-        c. err := net.Dial("tcp", "localhost:6379")
+        c, err := net.Dial("tcp", "localhost:6379")
         if err != nil {
                 panic(err.Error())
         }
@@ -260,6 +260,10 @@ func encode(i interface{}) string {
 	}
 }
 
+func cleanEnding(s string) string {
+        return strings.TrimSuffix(s, "\r\n")
+}
+
 func decode(r *bufio.Reader) (interface{}, error) {
 	t, err := r.ReadByte()
 	if err != nil {
@@ -271,9 +275,10 @@ func decode(r *bufio.Reader) (interface{}, error) {
 		if err != nil {
 			return nil, newConnError("Failed to get Error string in call to ReadString: %s", err)
 		}
-		return nil, parseError(s)
+		return nil, parseError(cleanEnding(s))
 	case "+":
-		return r.ReadString('\n')
+                tmp, err := r.ReadString('\n')
+                return cleanEnding(tmp), err
 	case ":":
 		return decodeIntSuffix(r)
 	case "$":
@@ -289,7 +294,7 @@ func decodeIntSuffix(r *bufio.Reader) (interface{}, error) {
 	if err != nil {
 		return nil, newConnError("Failed to get raw int in call to ReadString: %s", err)
 	}
-	i, err := toInt(s)
+	i, err := toInt(cleanEnding(s))
 	if err != nil {
 		return nil, newConversionError("Failed to convert raw int to int: %s", err)
 	}
@@ -301,7 +306,7 @@ func decodeBulkStringSuffix(r *bufio.Reader) (interface{}, error) {
 	if err != nil {
 		return nil, newConnError("Failed to get raw int for Bulk String size in call to ReadString: %s", err)
 	}
-	slen, err := toInt(tmp)
+	slen, err := toInt(cleanEnding(tmp))
 	if err != nil {
 		return nil, newConversionError("Failed to convert raw int to int for Bulk String size: %s", err)
 	}
@@ -320,7 +325,7 @@ func decodeArraySuffix(r *bufio.Reader) (interface{}, error) {
 	if err != nil {
 		return nil, newConnError("Failed to get raw int for Bulk Array size in call to ReadString: %s", err)
 	}
-	alen, err := toInt(tmp)
+	alen, err := toInt(cleanEnding(tmp))
 	if err != nil {
 		return nil, newConversionError("Failed to convert raw int to in for Bulk Array size: %s", err)
 	}
