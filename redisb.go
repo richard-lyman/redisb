@@ -38,6 +38,7 @@ package redisb
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -235,14 +236,14 @@ For any Redis command another option to process the response is as follows:
 */
 func DoN(c net.Conn, args ...string) (interface{}, error) {
 	if len(args) > 0 {
-		fmt.Fprintf(c, encode(args))
+		fmt.Fprint(c, encode(args))
 	}
 	return decode(bufio.NewReader(c))
 }
 
 // Out sends the arguments and does not read any of the response(s) back in
 func Out(c net.Conn, args ...string) {
-        fmt.Fprintf(c, encode(args))
+	fmt.Fprint(c, encode(args))
 }
 
 func encode(i interface{}) string {
@@ -261,7 +262,7 @@ func encode(i interface{}) string {
 }
 
 func cleanEnding(s string) string {
-        return strings.TrimSuffix(s, "\r\n")
+	return strings.TrimSuffix(s, "\r\n")
 }
 
 func decode(r *bufio.Reader) (interface{}, error) {
@@ -277,8 +278,8 @@ func decode(r *bufio.Reader) (interface{}, error) {
 		}
 		return nil, parseError(cleanEnding(s))
 	case "+":
-                tmp, err := r.ReadString('\n')
-                return cleanEnding(tmp), err
+		tmp, err := r.ReadString('\n')
+		return cleanEnding(tmp), err
 	case ":":
 		return decodeIntSuffix(r)
 	case "$":
@@ -314,7 +315,17 @@ func decodeBulkStringSuffix(r *bufio.Reader) (interface{}, error) {
 		return RedisNil{}, nil
 	}
 	s := make([]byte, slen)
-	r.Read(s)
+	totalBytesRead := 0
+	for {
+		bytesRead, err := r.Read(s)
+		if err != nil && err != io.EOF {
+			return nil, newConversionError("Failed to read all required bytes: %s", err)
+		}
+		totalBytesRead += bytesRead
+		if int64(totalBytesRead) == slen {
+			break
+		}
+	}
 	r.ReadByte()
 	r.ReadByte()
 	return string(s), nil
