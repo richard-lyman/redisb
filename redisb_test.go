@@ -33,21 +33,3 @@ func TestParseError(t *testing.T) {
                 }
         }
 }
-
-func TestToInt(t *testing.T) {
-        cases := []struct {
-                in string
-                out struct {
-                        r int64
-                        e error
-                }
-        }{
-                {"1", struct{int64, error}{1, nil}},
-        }
-        for _, c := range cases {
-                got := toInt(c.in)
-                if got != c.out {
-                        t.Errorf("toInt: %s", c.in)
-                }
-        }
-}
