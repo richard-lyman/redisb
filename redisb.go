@@ -55,8 +55,8 @@ type ConnError struct {
 	e error
 }
 
-func (e ConnError) Error() string {
-	return e.Error()
+func (self ConnError) Error() string {
+	return self.e.Error()
 }
 
 func newConnError(format string, values ...interface{}) ConnError {
@@ -68,8 +68,8 @@ type ConversionError struct {
 	e error
 }
 
-func (e ConversionError) Error() string {
-	return e.Error()
+func (self ConversionError) Error() string {
+	return self.e.Error()
 }
 
 func newConversionError(format string, values ...interface{}) ConversionError {
@@ -84,8 +84,8 @@ type RedisError struct {
 	Suffix string
 }
 
-func (e RedisError) Error() string {
-	return fmt.Sprintf("[%s]: %s", e.Prefix, e.Suffix)
+func (self RedisError) Error() string {
+	return fmt.Sprintf("[%s]: %s", self.Prefix, self.Suffix)
 }
 
 func parseError(s string) RedisError {
