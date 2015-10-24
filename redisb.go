@@ -315,13 +315,13 @@ func decodeBulkStringSuffix(r *bufio.Reader) (interface{}, error) {
 		return RedisNil{}, nil
 	}
 	s := make([]byte, slen)
-        _, err = io.ReadFull(r, s)
-        if err == io.EOF {
-                return nil, fmt.Errorf("Unable to read any bytes")
-        }
-        if err != nil {
-                return nil, fmt.Errorf("Unable to read required number of bytes: %s", err)
-        }
+	_, err = io.ReadFull(r, s)
+	if err == io.EOF {
+		return nil, fmt.Errorf("Unable to read any bytes")
+	}
+	if err != nil {
+		return nil, fmt.Errorf("Unable to read required number of bytes: %s", err)
+	}
 	r.ReadByte()
 	r.ReadByte()
 	return string(s), nil
