@@ -17,6 +17,13 @@ func TestDo(t *testing.T) {
 	}
 }
 
+func TestDoSubscribe(t *testing.T) {
+	c, err := net.Dial("tcp", "localhost:6379")
+	if err == nil {
+		Do(c, "SUBSCRIBE", "some_channel") // TODO - should this work??
+	}
+}
+
 func TestDoN(t *testing.T) {
 	c, err := net.Dial("tcp", "localhost:6379")
 	if err == nil {
