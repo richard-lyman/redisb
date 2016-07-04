@@ -37,14 +37,13 @@ package redisb
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"net"
 	"strconv"
 	"strings"
 )
-
-const nilLength = -1
 
 // RedisNil represents the unique Redis Null value that can result from Bulk String or Bulk Array.
 // Signals, 'there isn't a value,' which is different than an empty Bulk String value or empty Bulk Array value.
@@ -236,6 +235,7 @@ For any Redis command another option to process the response is as follows:
 */
 func DoN(c net.Conn, args ...string) (interface{}, error) {
 	if len(args) > 0 {
+		//encode(args, c)
 		fmt.Fprint(c, encode(args))
 	}
 	return decode(bufio.NewReader(c))
@@ -243,7 +243,25 @@ func DoN(c net.Conn, args ...string) (interface{}, error) {
 
 // Out sends the arguments and does not read any of the response(s) back in
 func Out(c net.Conn, args ...string) {
+	//encode(args, c)
 	fmt.Fprint(c, encode(args))
+}
+
+var stringsPrefix = []byte("*")
+var stringPrefix = []byte("$")
+var returnNewline = []byte("\r\n")
+
+func encodeDirect(ss []string, w io.Writer) {
+	w.Write(stringsPrefix)
+	fmt.Fprint(w, len(ss))
+	w.Write(returnNewline)
+	for _, s := range ss {
+		w.Write(stringPrefix)
+		fmt.Fprint(w, len(s))
+		w.Write(returnNewline)
+		w.Write([]byte(s))
+		w.Write(returnNewline)
+	}
 }
 
 func encode(i interface{}) string {
@@ -261,6 +279,33 @@ func encode(i interface{}) string {
 	}
 }
 
+func encode2(i interface{}) string {
+	switch t := i.(type) {
+	case []string:
+		var b bytes.Buffer
+		b.WriteRune('*')
+		b.WriteString(strconv.Itoa(len(t)))
+		b.WriteRune('\r')
+		b.WriteRune('\n')
+		for _, v := range t {
+			b.WriteString(encode(v))
+		}
+		return b.String()
+	case string:
+		var b bytes.Buffer
+		b.WriteRune('$')
+		b.WriteString(strconv.Itoa(len(t)))
+		b.WriteRune('\r')
+		b.WriteRune('\n')
+		b.WriteString(t)
+		b.WriteRune('\r')
+		b.WriteRune('\n')
+		return b.String()
+	default:
+		panic(fmt.Sprintf("Unable to encode type: %#v", t))
+	}
+}
+
 func cleanEnding(s string) string {
 	return strings.TrimSuffix(s, "\r\n")
 }
@@ -272,13 +317,13 @@ func decode(r *bufio.Reader) (interface{}, error) {
 	}
 	switch string(t) {
 	case "-":
-		s, err := r.ReadString('\n')
+		s, err := redisReadString(r)
 		if err != nil {
 			return nil, newConnError("Failed to get Error string in call to ReadString: %s", err)
 		}
 		return nil, parseError(cleanEnding(s))
 	case "+":
-		tmp, err := r.ReadString('\n')
+		tmp, err := redisReadString(r)
 		return cleanEnding(tmp), err
 	case ":":
 		return decodeIntSuffix(r)
@@ -291,7 +336,7 @@ func decode(r *bufio.Reader) (interface{}, error) {
 }
 
 func decodeIntSuffix(r *bufio.Reader) (interface{}, error) {
-	s, err := r.ReadString('\n')
+	s, err := redisReadString(r)
 	if err != nil {
 		return nil, newConnError("Failed to get raw int in call to ReadString: %s", err)
 	}
@@ -303,16 +348,16 @@ func decodeIntSuffix(r *bufio.Reader) (interface{}, error) {
 }
 
 func decodeBulkStringSuffix(r *bufio.Reader) (interface{}, error) {
-	tmp, err := r.ReadString('\n')
+	tmp, err := redisReadString(r)
 	if err != nil {
 		return nil, newConnError("Failed to get raw int for Bulk String size in call to ReadString: %s", err)
 	}
-	slen, err := toInt(cleanEnding(tmp))
+	if isNegativeOne(tmp) {
+		return RedisNil{}, nil
+	}
+	slen, err := toUint(cleanEnding(tmp))
 	if err != nil {
 		return nil, newConversionError("Failed to convert raw int to int for Bulk String size: %s", err)
-	}
-	if slen == nilLength {
-		return RedisNil{}, nil
 	}
 	s := make([]byte, slen)
 	_, err = io.ReadFull(r, s)
@@ -328,19 +373,19 @@ func decodeBulkStringSuffix(r *bufio.Reader) (interface{}, error) {
 }
 
 func decodeArraySuffix(r *bufio.Reader) (interface{}, error) {
-	tmp, err := r.ReadString('\n')
+	tmp, err := redisReadString(r)
 	if err != nil {
 		return nil, newConnError("Failed to get raw int for Bulk Array size in call to ReadString: %s", err)
 	}
-	alen, err := toInt(cleanEnding(tmp))
-	if err != nil {
-		return nil, newConversionError("Failed to convert raw int to in for Bulk Array size: %s", err)
-	}
-	if alen == nilLength {
+	if isNegativeOne(tmp) {
 		return RedisNil{}, nil
 	}
+	alen, err := toUint(cleanEnding(tmp))
+	if err != nil {
+		return nil, newConversionError("Failed to convert raw int to int for Bulk Array size: %s", err)
+	}
 	result := make([]interface{}, 0, alen)
-	for i := int64(0); i < alen; i++ {
+	for i := uint64(0); i < alen; i++ {
 		v, err := decode(r)
 		if err != nil {
 			return nil, err
@@ -350,6 +395,36 @@ func decodeArraySuffix(r *bufio.Reader) (interface{}, error) {
 	return result, nil
 }
 
+func isNegativeOne(s string) bool {
+	return len(s) >= 2 && s[0] == '-' && s[1] == '1'
+}
+
+func toUint(s string) (uint64, error) {
+	return strconv.ParseUint(strings.TrimSpace(s), 10, 64)
+}
+
 func toInt(s string) (int64, error) {
 	return strconv.ParseInt(strings.TrimSpace(s), 10, 64)
+}
+
+func redisReadString(r *bufio.Reader) (string, error) {
+	//return r.ReadString('\n')
+	var out bytes.Buffer
+	for {
+		b, err := r.ReadByte()
+		if err != nil {
+			return "", fmt.Errorf("failed to read byte: %s", err)
+		}
+		if b == '\r' {
+			b, err := r.ReadByte()
+			if err != nil {
+				return "", fmt.Errorf("failed to read byte: %s", err)
+			}
+			if b != '\n' {
+				return "", fmt.Errorf("failed to read required final newline byte")
+			}
+			return out.String(), nil
+		}
+		out.WriteByte(b)
+	}
 }
