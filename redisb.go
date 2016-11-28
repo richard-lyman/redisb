@@ -1,38 +1,3 @@
-/*
-Package redisb implements a simple Redis Client - a 'Redis base' or redisb.
-
-For any Redis command one option is to use Do to send the request and process the response as follows:
-
-        c, err := net.Dial("tcp", "localhost:6379")
-        if err != nil {
-                panic(err.Error())
-        }
-        tmpv, err := redisb.Do(c, "GET", "some_key")
-        if err != nil {
-                // Handle the error, possibly as shown below with a type switch
-        } else if tmpv == nil {
-                // Handle a nil value - that occurred without error
-        } else {
-                // There's either an int64, a string, or an interface{} slice in tmpv depending on the Redis Command used
-        }
-
-For handling errors, you might use a type switch as follows:
-
-        switch err.(type) {
-        case redisb.RedisError:
-                // Redis saw your request, and there is a related error provided from Redis
-        case redisb.ConnError:
-                // The given net.Conn is 'bad' - if it came from a pool, just Close it - don't return it.
-                // You might be successful if you opened a new net.Conn and tried that same call again.
-                // The Redis Server you connected to might not be valid (unreachable, etc.). You might be successful if you opened a net.Conn to another Server.
-        case redisb.ConversionError:
-                // There is something seriously wrong...
-                // ... your connection is good, Redis saw your request, Redis didn't have a problem responding... and it gave an invalid response
-                // Submit a bug. :-)
-        default:
-                // This is some other error - which shouldn't occur... again, submit a bug. :-)
-        }
-*/
 package redisb
 
 import (
@@ -40,29 +5,180 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"net"
+	"reflect"
 	"strconv"
 	"strings"
 )
 
-// RedisNil represents the unique Redis Null value that can result from Bulk String or Bulk Array.
-// Signals, 'there isn't a value,' which is different than an empty Bulk String value or empty Bulk Array value.
-type RedisNil struct{}
+type redisType string
 
-// ConnError indicates a failure to read from the given net.Conn.
-type ConnError struct {
+var returnTypes = map[string]redisType{
+	"set": "bool",
+}
+
+func Raw(rw io.ReadWriter, args ...string) (interface{}, error) {
+	fmt.Fprint(rw, Encode(args))
+	return Decode(bufio.NewReader(rw))
+}
+
+func Int64(rw io.ReadWriter, args ...string) (int64, error) {
+	fmt.Fprint(rw, Encode(args))
+	i, err := Decode(bufio.NewReader(rw))
+	if err != nil {
+		return 0, err
+	}
+	result, err := toInt64(i)
+	return result, err
+}
+
+func toInt64(i interface{}) (int64, error) {
+	switch t := i.(type) {
+	case int64:
+		return t, nil
+	case string:
+		result, err := toInt(t)
+		if err != nil {
+			return 0, newConversionError("Conversion to int64 failed: %#v, %s", i, err)
+		}
+		return result, nil
+	}
+	return 0, newConversionError("Conversion to int64 failed: %#v", i)
+}
+
+func Bool(rw io.ReadWriter, args ...string) (bool, error) {
+	fmt.Fprint(rw, Encode(args))
+	i, err := Decode(bufio.NewReader(rw))
+	if err != nil {
+		return false, err
+	}
+	result, err := toBool(i)
+	return result, err
+}
+
+func toBool(i interface{}) (bool, error) {
+	switch i {
+	case "OK":
+		return true, nil
+	case "1":
+		return true, nil
+	case int64(1):
+		return true, nil
+	case "0":
+		return false, nil
+	case int64(0):
+		return false, nil
+	case nil:
+		return false, nil
+	}
+	return false, newConversionError("Conversion to bool failed: %#v %s", i, reflect.TypeOf(i))
+}
+
+func String(rw io.ReadWriter, args ...string) (string, error) {
+	fmt.Fprint(rw, Encode(args))
+	i, err := Decode(bufio.NewReader(rw))
+	if err != nil {
+		return "", err
+	}
+	result, err := toString(i)
+	return result, err
+}
+
+func toString(i interface{}) (string, error) {
+	s, ok := i.(string)
+	if ok {
+		return s, nil
+	}
+	return "", newConversionError("Conversion to string failed: %#v", i)
+}
+
+func Array(rw io.ReadWriter, args ...string) ([]interface{}, error) {
+	fmt.Fprint(rw, Encode(args))
+	i, err := Decode(bufio.NewReader(rw))
+	if err != nil {
+		return nil, err
+	}
+	a, ok := i.([]interface{})
+	if ok {
+		return a, nil
+	}
+	return nil, newConversionError("Conversion to []interface{} failed: %#v", i)
+}
+
+func Bools(rw io.ReadWriter, args ...string) ([]bool, error) {
+	fmt.Fprint(rw, Encode(args))
+	i, err := Decode(bufio.NewReader(rw))
+	if err != nil {
+		return nil, err
+	}
+	a, ok := i.([]interface{})
+	if !ok {
+		return nil, newConversionError("Conversion to []bool failed: %#v", i)
+	}
+	result := []bool{}
+	for _, v := range a {
+		sv, err := toBool(v)
+		if err != nil {
+			return nil, newConversionError("Conversion to []bool failed: %#v: %s", i, err)
+		}
+		result = append(result, sv)
+	}
+	return result, nil
+}
+
+func Int64s(rw io.ReadWriter, args ...string) ([]int64, error) {
+	fmt.Fprint(rw, Encode(args))
+	i, err := Decode(bufio.NewReader(rw))
+	if err != nil {
+		return nil, err
+	}
+	a, ok := i.([]interface{})
+	if !ok {
+		return nil, newConversionError("Conversion to []int64 failed: %#v", i)
+	}
+	result := []int64{}
+	for _, v := range a {
+		sv, err := toInt64(v)
+		if err != nil {
+			return nil, newConversionError("Conversion to []int64 failed: %#v: %s", i, err)
+		}
+		result = append(result, sv)
+	}
+	return result, nil
+}
+
+func Strings(rw io.ReadWriter, args ...string) ([]string, error) {
+	fmt.Fprint(rw, Encode(args))
+	i, err := Decode(bufio.NewReader(rw))
+	if err != nil {
+		return nil, err
+	}
+	a, ok := i.([]interface{})
+	if !ok {
+		return nil, newConversionError("Conversion to []string failed: %#v", i)
+	}
+	result := []string{}
+	for _, v := range a {
+		sv, err := toString(v)
+		if err != nil {
+			return nil, newConversionError("Conversion to []string failed: %#v: %s", i, err)
+		}
+		result = append(result, sv)
+	}
+	return result, nil
+}
+
+type ReaderError struct {
 	e error
 }
 
-func (ce ConnError) Error() string {
-	return ce.e.Error()
+func (re ReaderError) Error() string {
+	return re.e.Error()
 }
 
-func newConnError(format string, values ...interface{}) ConnError {
-	return ConnError{fmt.Errorf(format, values...)}
+func newReaderError(format string, values ...interface{}) ReaderError {
+	return ReaderError{fmt.Errorf(format, values...)}
 }
 
-// ConversionError indicates a failure to convert from the raw bytes representing an int to an int.
 type ConversionError struct {
 	e error
 }
@@ -75,11 +191,8 @@ func newConversionError(format string, values ...interface{}) ConversionError {
 	return ConversionError{fmt.Errorf(format, values...)}
 }
 
-// RedisError wraps the Redis Error data type.
 type RedisError struct {
-	// Holds the prefix key provided by Redis to indicate what class of errors the Suffix describes
 	Prefix string
-	// Holds the suffix description provided by Redis to describe this specific instance of the class of error indicated by the Prefix
 	Suffix string
 }
 
@@ -95,236 +208,37 @@ func parseError(s string) RedisError {
 	return RedisError{p[0], p[1]}
 }
 
-/*
-Do accepts a net.Conn, connected to an instance of Redis, and any number of strings that are the Bulk String values in the Bulk Array formatted request sent to Redis.
-Do will return the response from Redis.
-The actual type of the value returned depends on the Redis command used in the request.
-
-Do internally calls DoN and converts the RedisNil value returned from DoN to a Go nil so it's easier to handle.
-The errors returned have the same possibilities as DoN.
-
-Outside of the normal responses, there is one other unique response that can be returned.
-Redis can reply with a value that holds an error message.
-That error message is encoded in the error return value as a redisb.RedisError.
-
-Do can be used as a Send/Receive or as just a Receive.
-When len(args) > 0, they are written to the net.Conn and then the response is received.
-When len(args) == 0, then nothing is written to the net.Conn and the response is received.
-This allows Do to work for notifications.
-
-For any Redis command one option to process a Do response is as follows:
-
-        c, err := net.Dial("tcp", "localhost:6379")
-        if err != nil {
-                panic(err.Error())
-        }
-        tmpv, err := redisb.Do(c, "GET", "some_key")
-        if err != nil {
-                // Handle the error, possibly as shown below with a type switch
-        } else if tmpv == nil {
-                // Handle a nil value - that occurred without error
-        } else {
-                // There's either an int64, a string, or an interface{} slice in tmpv depending on the Redis Command used
-        }
-
-For handling errors, you might use a type switch as follows:
-
-        switch err.(type) {
-        case redisb.RedisError:
-                // Redis saw your request, and there is a related error provided from Redis
-        case redisb.ConnError:
-                // The given net.Conn is 'bad' - if it came from a pool, just Close it - don't return it.
-                // You might be successful if you opened a new net.Conn and tried that same call again.
-                // The Redis Server you connected to might not be valid (unreachable, etc.). You might be successful if you opened a net.Conn to another Server.
-        case redisb.ConversionError:
-                // There is something seriously wrong...
-                // ... your connection is good, Redis saw your request, Redis didn't have a problem responding... and it gave an invalid response
-                // Submit a bug. :-)
-        default:
-                // This is some other error - which shouldn't occur... again, submit a bug. :-)
-        }
-*/
-func Do(c net.Conn, args ...string) (interface{}, error) {
-	tmp, err := DoN(c, args...)
-	if _, isRedisNil := tmp.(RedisNil); isRedisNil {
-		return nil, err
-	}
-	return tmp, err
-}
-
-/*
-DoN accepts a net.Conn, connected to an instance of Redis, and any number of strings that are the Bulk String values in the Bulk Array formatted request sent to Redis.
-DoN will return the response from Redis.
-The actual type of the value returned depends on the Redis command used in the request.
-
-Outside of the normal responses, there are two other unique values that can be returned.
-Redis can reply with a value that holds an error message.
-That error message is encoded in the error return value as a redisb.RedisError.
-The other unique response value is not returned in the error, and has the redisb.RedisNil type.
-
-DoN can be used as a Send/Receive or as just a Receive.
-When len(args) > 0, they are written to the net.Conn and then the response is received.
-When len(args) == 0, then nothing is written to the net.Conn and the response is received.
-This allows DoN to work for notifications.
-
-For any Redis command one option to process the response is as follows:
-
-        c, err := net.Dial("tcp", "localhost:6379")
-        if err != nil {
-                panic(err.Error())
-        }
-        tmpv, err := redisb.DoN(c, "GET", "some_key")
-        if _, isRedisNil := tmpv.(redisb.RedisNil); err == nil && !isRedisNil {
-                // There's a concrete non-nil value in tmpv
-        } else {
-                // Either there's an error in err, or we need to handle a RedisNil value
-
-        }
-
-For any Redis command another option to process the response is as follows:
-
-        c, err := net.Dial("tcp", "localhost:6379")
-        if err != nil {
-                panic(err.Error())
-        }
-        tmpv, err := redisb.DoN(c, "GET", "some_key")
-        if tmpv == nil {
-                // Handle the many different error types (possibly as shown below)
-        } else {
-                // If the 'err' is nil, then there is a sane value in tmpv - just make sure you handle the Redis Nil value
-                switch tmpv.(type) {
-                case redisb.RedisNil:
-                        // Handle
-                default:
-                        // Convert to a type depending on the Redis command used
-                }
-        }
-
-For any Redis command another option to process the response is as follows:
-
-        c, err := net.Dial("tcp", "localhost:6379")
-        if err != nil {
-                panic(err.Error())
-        }
-        tmpv, err := redisb.DoN(c, "GET", "some_key")
-        if err != nil {
-                switch err.(type) {
-                case redisb.RedisError:
-                        // Redis saw your request, and there is a related error provided from Redis
-                case redisb.ConnError:
-                        // The given net.Conn is 'bad' - if it came from a pool, just Close it - don't return it.
-                        // You might be successful if you opened a new net.Conn and tried that same call again.
-                        // The Redis Server you connected to might not be valid (unreachable, etc.). You might be successful if you opened a net.Conn to another Server.
-                case redisb.ConversionError:
-                        // There is something seriously wrong...
-                        // ... your connection is good, Redis saw your request, Redis didn't have a problem responding... and it gave an invalid response
-                        // Submit a bug. :-)
-                default:
-                        // This is some other error - which shouldn't occur... again, submit a bug. :-)
-                }
-        }
-        // Use tmpv as a specific value, who's type depends on the Redis Command used.
-        // The type of tmpv could be an int64, string, interface{} slice, or the special redisb.RedisNil.
-        // You may want to use code like the following:
-        switch tmpv.(type) {
-        case redisb.RedisNil:
-                // Handle
-        default:
-                // Convert to a type depending on the Redis command used
-        }
-*/
-func DoN(c net.Conn, args ...string) (interface{}, error) {
-	if len(args) > 0 {
-		//encode(args, c)
-		fmt.Fprint(c, encode(args))
-	}
-	return decode(bufio.NewReader(c))
-}
-
-// Out sends the arguments and does not read any of the response(s) back in
-func Out(c net.Conn, args ...string) {
-	//encode(args, c)
-	fmt.Fprint(c, encode(args))
-}
-
-var stringsPrefix = []byte("*")
-var stringPrefix = []byte("$")
-var returnNewline = []byte("\r\n")
-
-func encodeDirect(ss []string, w io.Writer) {
-	w.Write(stringsPrefix)
-	fmt.Fprint(w, len(ss))
-	w.Write(returnNewline)
-	for _, s := range ss {
-		w.Write(stringPrefix)
-		fmt.Fprint(w, len(s))
-		w.Write(returnNewline)
-		w.Write([]byte(s))
-		w.Write(returnNewline)
-	}
-}
-
-func encode(i interface{}) string {
+func Encode(i interface{}) string {
 	switch t := i.(type) {
 	case []string:
-		s := []string{"*", strconv.Itoa(len(i.([]string))), "\r\n"}
-		for _, v := range i.([]string) {
-			s = append(s, encode(v))
+		s := []string{"*", strconv.Itoa(len(t)), "\r\n"}
+		for _, v := range t {
+			s = append(s, Encode(v))
 		}
 		return strings.Join(s, "")
 	case string:
-		return "$" + strconv.Itoa(len(i.(string))) + "\r\n" + i.(string) + "\r\n"
+		return "$" + strconv.Itoa(len(t)) + "\r\n" + t + "\r\n"
 	default:
-		panic(fmt.Sprintf("Unable to encode type: %#v", t))
+		panic(fmt.Sprintf("Unable to Encode type: %#v", t))
 	}
 }
 
-func encode2(i interface{}) string {
-	switch t := i.(type) {
-	case []string:
-		var b bytes.Buffer
-		b.WriteRune('*')
-		b.WriteString(strconv.Itoa(len(t)))
-		b.WriteRune('\r')
-		b.WriteRune('\n')
-		for _, v := range t {
-			b.WriteString(encode(v))
-		}
-		return b.String()
-	case string:
-		var b bytes.Buffer
-		b.WriteRune('$')
-		b.WriteString(strconv.Itoa(len(t)))
-		b.WriteRune('\r')
-		b.WriteRune('\n')
-		b.WriteString(t)
-		b.WriteRune('\r')
-		b.WriteRune('\n')
-		return b.String()
-	default:
-		panic(fmt.Sprintf("Unable to encode type: %#v", t))
-	}
-}
-
-func cleanEnding(s string) string {
-	return strings.TrimSuffix(s, "\r\n")
-}
-
-func decode(r *bufio.Reader) (interface{}, error) {
+func Decode(r *bufio.Reader) (interface{}, error) {
 	t, err := r.ReadByte()
 	if err != nil {
-		return nil, newConnError("Failed to get Redis type byte in to call ReadByte: %s", err)
+		return nil, newReaderError("Failed to get Redis type byte in to call ReadByte: %s", err)
 	}
+	//fmt.Println("Type:", string(t))
 	switch string(t) {
 	case "-":
 		s, err := redisReadString(r)
 		if err != nil {
-			return nil, newConnError("Failed to get Error string in call to ReadString: %s", err)
+			return nil, newReaderError("Failed to get Error string in call to ReadString: %s", err)
 		}
-		return nil, parseError(cleanEnding(s))
+		return nil, parseError(s)
 	case "+":
 		tmp, err := redisReadString(r)
-		return cleanEnding(tmp), err
+		return tmp, err
 	case ":":
 		return decodeIntSuffix(r)
 	case "$":
@@ -338,9 +252,9 @@ func decode(r *bufio.Reader) (interface{}, error) {
 func decodeIntSuffix(r *bufio.Reader) (interface{}, error) {
 	s, err := redisReadString(r)
 	if err != nil {
-		return nil, newConnError("Failed to get raw int in call to ReadString: %s", err)
+		return nil, newReaderError("Failed to get raw int in call to ReadString: %s", err)
 	}
-	i, err := toInt(cleanEnding(s))
+	i, err := toInt(s)
 	if err != nil {
 		return nil, newConversionError("Failed to convert raw int to int: %s", err)
 	}
@@ -350,12 +264,13 @@ func decodeIntSuffix(r *bufio.Reader) (interface{}, error) {
 func decodeBulkStringSuffix(r *bufio.Reader) (interface{}, error) {
 	tmp, err := redisReadString(r)
 	if err != nil {
-		return nil, newConnError("Failed to get raw int for Bulk String size in call to ReadString: %s", err)
+		return nil, newReaderError("Failed to get raw int for Bulk String size in call to ReadString: %s", err)
 	}
 	if isNegativeOne(tmp) {
-		return RedisNil{}, nil
+		//fmt.Println("Negative one - redis null on bulk empty string")
+		return nil, nil
 	}
-	slen, err := toUint(cleanEnding(tmp))
+	slen, err := toUint(tmp)
 	if err != nil {
 		return nil, newConversionError("Failed to convert raw int to int for Bulk String size: %s", err)
 	}
@@ -375,18 +290,18 @@ func decodeBulkStringSuffix(r *bufio.Reader) (interface{}, error) {
 func decodeArraySuffix(r *bufio.Reader) (interface{}, error) {
 	tmp, err := redisReadString(r)
 	if err != nil {
-		return nil, newConnError("Failed to get raw int for Bulk Array size in call to ReadString: %s", err)
+		return nil, newReaderError("Failed to get raw int for Bulk Array size in call to ReadString: %s", err)
 	}
 	if isNegativeOne(tmp) {
-		return RedisNil{}, nil
+		return nil, nil
 	}
-	alen, err := toUint(cleanEnding(tmp))
+	alen, err := toUint(tmp)
 	if err != nil {
 		return nil, newConversionError("Failed to convert raw int to int for Bulk Array size: %s", err)
 	}
 	result := make([]interface{}, 0, alen)
 	for i := uint64(0); i < alen; i++ {
-		v, err := decode(r)
+		v, err := Decode(r)
 		if err != nil {
 			return nil, err
 		}
@@ -396,7 +311,7 @@ func decodeArraySuffix(r *bufio.Reader) (interface{}, error) {
 }
 
 func isNegativeOne(s string) bool {
-	return len(s) >= 2 && s[0] == '-' && s[1] == '1'
+	return len(s) == 2 && s[0] == '-' && s[1] == '1'
 }
 
 func toUint(s string) (uint64, error) {
@@ -408,7 +323,6 @@ func toInt(s string) (int64, error) {
 }
 
 func redisReadString(r *bufio.Reader) (string, error) {
-	//return r.ReadString('\n')
 	var out bytes.Buffer
 	for {
 		b, err := r.ReadByte()
@@ -423,6 +337,7 @@ func redisReadString(r *bufio.Reader) (string, error) {
 			if b != '\n' {
 				return "", fmt.Errorf("failed to read required final newline byte")
 			}
+			//return strings.TrimSuffix(out.String(), "\r\n"), nil
 			return out.String(), nil
 		}
 		out.WriteByte(b)
