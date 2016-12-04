@@ -10,12 +10,6 @@ import (
 	"strings"
 )
 
-type redisType string
-
-var returnTypes = map[string]redisType{
-	"set": "bool",
-}
-
 func Raw(rw io.ReadWriter, args ...string) (interface{}, error) {
 	fmt.Fprint(rw, Encode(args))
 	return Decode(bufio.NewReader(rw))
@@ -88,7 +82,11 @@ func toString(i interface{}) (string, error) {
 	if ok {
 		return s, nil
 	}
-	return "", newConversionError("Conversion to string failed: %#v", i)
+	switch t := i.(type) {
+	case int64:
+		return strconv.FormatInt(t, 10), nil
+	}
+	return "", newConversionError("Conversion to string failed: %#v %s", i, reflect.TypeOf(i))
 }
 
 func Array(rw io.ReadWriter, args ...string) ([]interface{}, error) {
